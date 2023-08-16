@@ -45,6 +45,7 @@ func main() {
 	proxy := flag.String(("proxy"), "", "Proxy URL. E.g. -proxy http://127.0.0.1:8080")
 	timeout := flag.Int("timeout", -1, "Maximum time to crawl each URL from stdin, in seconds.")
 	disableRedirects := flag.Bool("dr", false, "Disable following HTTP redirects.")
+	scope := flag.Bool("scope", false, "Only show URLs containing the original provided URL.")
 
 	flag.Parse()
 
@@ -127,19 +128,19 @@ func main() {
 				abs_link := e.Request.AbsoluteURL(link)
 				if strings.Contains(abs_link, url) || !*inside {
 
-					printResult(link, "href", *showSource, *showWhere, *showJson, results, e)
+					printResult(link, "href", *showSource, *showWhere, *showJson, results, e, url, *scope)
 					e.Request.Visit(link)
 				}
 			})
 
 			// find and print all the JavaScript files
 			c.OnHTML("script[src]", func(e *colly.HTMLElement) {
-				printResult(e.Attr("src"), "script", *showSource, *showWhere, *showJson, results, e)
+				printResult(e.Attr("src"), "script", *showSource, *showWhere, *showJson, results, e, url, *scope)
 			})
 
 			// find and print all the form action URLs
 			c.OnHTML("form[action]", func(e *colly.HTMLElement) {
-				printResult(e.Attr("action"), "form", *showSource, *showWhere, *showJson, results, e)
+				printResult(e.Attr("action"), "form", *showSource, *showWhere, *showJson, results, e, url, *scope)
 			})
 
 			// add the custom headers
@@ -248,37 +249,41 @@ func extractHostname(urlString string) (string, error) {
 }
 
 // print result constructs output lines and sends them to the results chan
-func printResult(link string, sourceName string, showSource bool, showWhere bool, showJson bool, results chan string, e *colly.HTMLElement) {
+func printResult(link string, sourceName string, showSource bool, showWhere bool, showJson bool, results chan string, e *colly.HTMLElement, originalURL string, scope bool) {
 	result := e.Request.AbsoluteURL(link)
-	whereURL := e.Request.URL.String()
-	if result != "" {
-		if showJson {
-			where := ""
-			if showWhere {
-				where = whereURL
-			}
-			bytes, _ := json.Marshal(Result{
-				Source: sourceName,
-				URL:    result,
-				Where:  where,
-			})
-			result = string(bytes)
-		} else if showSource {
-			result = "[" + sourceName + "] " + result
-		}
+    whereURL := e.Request.URL.String()
+    if result != "" {
+        if scope && !strings.Contains(result, originalURL) {
+            return
+        }
 
-		if showWhere && !showJson {
-			result = "[" + whereURL + "] " + result
-		}
+        if showJson {
+            where := ""
+            if showWhere {
+                where = whereURL
+            }
+            bytes, _ := json.Marshal(Result{
+                Source: sourceName,
+                URL:    result,
+                Where:  where,
+            })
+            result = string(bytes)
+        } else if showSource {
+            result = "[" + sourceName + "] " + result
+        }
 
-		// If timeout occurs before goroutines are finished, recover from panic that may occur when attempting writing to results to closed results channel
-		defer func() {
-			if err := recover(); err != nil {
-				return
-			}
-		}()
-		results <- result
-	}
+        if showWhere && !showJson {
+            result = "[" + whereURL + "] " + result
+        }
+
+        // If timeout occurs before goroutines are finished, recover from panic that may occur when attempting writing to results to closed results channel
+        defer func() {
+            if err := recover(); err != nil {
+                return
+            }
+        }()
+        results <- result
+    }
 }
 
 // returns whether the supplied url is unique or not
